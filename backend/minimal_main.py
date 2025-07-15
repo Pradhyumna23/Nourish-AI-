@@ -5,6 +5,7 @@ Avoiding all compilation issues by using minimal dependencies
 
 import os
 import json
+import ssl
 import uvicorn
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
@@ -53,23 +54,87 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 async def startup_db_client():
     global client, db
     try:
-        # Add SSL configuration for Render compatibility
-        client = MongoClient(
-            MONGODB_URL,
-            serverSelectionTimeoutMS=5000,
-            connectTimeoutMS=5000,
-            socketTimeoutMS=5000,
-            tlsAllowInvalidCertificates=True  # For Render compatibility
-        )
+        # Parse the MongoDB URL to add SSL parameters
+        if "mongodb+srv://" in MONGODB_URL:
+            # For MongoDB Atlas, use specific SSL configuration for Render
+            connection_params = {
+                "serverSelectionTimeoutMS": 10000,
+                "connectTimeoutMS": 10000,
+                "socketTimeoutMS": 10000,
+                "maxPoolSize": 10,
+                "retryWrites": True,
+                "w": "majority",
+                # SSL/TLS configuration for Render compatibility
+                "tls": True,
+                "tlsAllowInvalidCertificates": True,
+                "tlsAllowInvalidHostnames": True,
+                "ssl_cert_reqs": "CERT_NONE"
+            }
+
+            # Create connection string with SSL parameters
+            if "?" in MONGODB_URL:
+                base_url = MONGODB_URL.split("?")[0]
+                ssl_params = "&".join([
+                    "ssl=true",
+                    "ssl_cert_reqs=CERT_NONE",
+                    "tlsAllowInvalidCertificates=true",
+                    "retryWrites=true",
+                    "w=majority"
+                ])
+                mongodb_url = f"{base_url}?{ssl_params}"
+            else:
+                ssl_params = "?ssl=true&ssl_cert_reqs=CERT_NONE&tlsAllowInvalidCertificates=true&retryWrites=true&w=majority"
+                mongodb_url = f"{MONGODB_URL}{ssl_params}"
+        else:
+            mongodb_url = MONGODB_URL
+            connection_params = {
+                "serverSelectionTimeoutMS": 10000,
+                "connectTimeoutMS": 10000,
+                "socketTimeoutMS": 10000,
+            }
+
+        print(f"🔗 Attempting MongoDB connection...")
+        client = MongoClient(mongodb_url, **connection_params)
         db = client.nutrient_db
+
         # Test connection with timeout
         client.admin.command('ping')
         print("✅ Connected to MongoDB successfully")
+
     except Exception as e:
         print(f"❌ MongoDB connection failed: {e}")
-        print("🔄 Continuing in demo mode without database")
-        client = None
-        db = None
+        print("🔄 Trying alternative connection method...")
+
+        # Try alternative connection without SSL verification
+        try:
+            import ssl
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+
+            # Extract base URL without parameters
+            base_url = MONGODB_URL.split("?")[0] if "?" in MONGODB_URL else MONGODB_URL
+
+            client = MongoClient(
+                base_url,
+                serverSelectionTimeoutMS=15000,
+                connectTimeoutMS=15000,
+                socketTimeoutMS=15000,
+                ssl=True,
+                ssl_cert_reqs=ssl.CERT_NONE,
+                ssl_match_hostname=False,
+                retryWrites=True,
+                w="majority"
+            )
+            db = client.nutrient_db
+            client.admin.command('ping')
+            print("✅ Connected to MongoDB with alternative method")
+
+        except Exception as e2:
+            print(f"❌ Alternative connection also failed: {e2}")
+            print("❌ Unable to connect to MongoDB. Application will run without database.")
+            client = None
+            db = None
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
@@ -96,14 +161,23 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 def get_current_user_from_token(authorization: str = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="No valid authorization header")
-    
+
     token = authorization.split(" ")[1]
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
         email: str = payload.get("sub")
         if email is None:
             raise HTTPException(status_code=401, detail="Invalid token")
-        return {"email": email}
+
+        # Check if database is available and user exists
+        if not db:
+            raise HTTPException(status_code=503, detail="Database connection required")
+
+        user = db.users.find_one({"email": email})
+        if user is None:
+            raise HTTPException(status_code=401, detail="User not found")
+
+        return user
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
@@ -149,12 +223,7 @@ async def register(request: Request):
             raise HTTPException(status_code=400, detail="Missing required fields")
         
         if not db:
-            # Demo mode - just return token
-            access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-            access_token = create_access_token(
-                data={"sub": email}, expires_delta=access_token_expires
-            )
-            return {"access_token": access_token, "token_type": "bearer"}
+            raise HTTPException(status_code=503, detail="Database connection required for registration")
         
         # Check if user exists
         if db.users.find_one({"email": email}):
@@ -194,12 +263,7 @@ async def login(request: Request):
             raise HTTPException(status_code=400, detail="Missing email or password")
         
         if not db:
-            # Demo mode - allow any login
-            access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-            access_token = create_access_token(
-                data={"sub": email}, expires_delta=access_token_expires
-            )
-            return {"access_token": access_token, "token_type": "bearer"}
+            raise HTTPException(status_code=503, detail="Database connection required for login")
         
         # Authenticate user
         user = db.users.find_one({"email": email})
