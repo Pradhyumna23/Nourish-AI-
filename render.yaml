@@ -3,8 +3,8 @@ services:
   - type: web
     name: nourishai-backend
     env: python
-    buildCommand: "cd backend && pip install -r requirements-render.txt"
-    startCommand: "cd backend && python render_main.py"
+    buildCommand: "cd backend && pip install -r requirements-minimal.txt"
+    startCommand: "cd backend && python minimal_main.py"
     plan: free
     healthCheckPath: /health
     envVars:
