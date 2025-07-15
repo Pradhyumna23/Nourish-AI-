@@ -53,14 +53,23 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 async def startup_db_client():
     global client, db
     try:
-        client = MongoClient(MONGODB_URL)
+        # Add SSL configuration for Render compatibility
+        client = MongoClient(
+            MONGODB_URL,
+            serverSelectionTimeoutMS=5000,
+            connectTimeoutMS=5000,
+            socketTimeoutMS=5000,
+            tlsAllowInvalidCertificates=True  # For Render compatibility
+        )
         db = client.nutrient_db
-        # Test connection
+        # Test connection with timeout
         client.admin.command('ping')
         print("✅ Connected to MongoDB successfully")
     except Exception as e:
         print(f"❌ MongoDB connection failed: {e}")
-        # Continue without database for basic functionality
+        print("🔄 Continuing in demo mode without database")
+        client = None
+        db = None
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
@@ -106,7 +115,7 @@ async def root():
         "version": "1.0.0",
         "status": "running",
         "features": {
-            "database": "✅ MongoDB" if db else "❌ Not connected",
+            "database": "✅ MongoDB" if db is not None else "❌ Not connected",
             "gemini_ai": "✅ Available" if GEMINI_API_KEY else "❌ Not configured",
             "usda_api": "✅ Available"
         }
