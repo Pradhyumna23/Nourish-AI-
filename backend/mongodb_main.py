@@ -53,7 +53,7 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_origins=["http://localhost:3000", "http://localhost:5173", "https://*.onrender.com"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -2718,10 +2718,13 @@ if __name__ == "__main__":
     print(f"   ✅ MongoDB Atlas (Persistent Storage)")
     print("📖 API Documentation: http://localhost:8002/docs")
 
+    # Get port from environment (Render sets PORT automatically)
+    port = int(os.getenv("PORT", 8002))
+
     uvicorn.run(
         "mongodb_main:app",
         host="0.0.0.0",
-        port=8002,  # Different port for MongoDB version
-        reload=True,
+        port=port,
+        reload=False,  # Disable reload in production
         log_level="info"
     )

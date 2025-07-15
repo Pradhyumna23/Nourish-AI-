@@ -1,0 +1,54 @@
+services:
+  # Backend API Service
+  - type: web
+    name: nourishai-backend
+    env: python
+    buildCommand: "cd backend && pip install -r requirements.txt"
+    startCommand: "cd backend && python mongodb_main.py"
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: MONGODB_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: USDA_API_KEY
+        sync: false
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: 30
+      - key: BACKEND_HOST
+        value: 0.0.0.0
+      - key: BACKEND_PORT
+        value: 10000
+      - key: DEBUG
+        value: false
+      - key: PYTHONPATH
+        value: /opt/render/project/src/backend
+
+  # Frontend Static Site
+  - type: static
+    name: nourishai-frontend
+    buildCommand: "cd frontend && npm ci && npm run build"
+    staticPublishPath: frontend/dist
+    plan: free
+    buildFilter:
+      paths:
+      - frontend/**
+    envVars:
+      - key: REACT_APP_API_URL
+        fromService:
+          type: web
+          name: nourishai-backend
+          property: host
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+databases:
+  # Note: Using external MongoDB Atlas
+  # No database service needed as we're using MongoDB Atlas
